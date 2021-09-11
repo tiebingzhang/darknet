@@ -114,7 +114,6 @@ static int close_socket(SOCKET s) {
 
 
 extern mat_cv* in_img;
-extern int send_jpeg_json;
 
 // NOTE: This code came up with the following stackoverflow post:
 // https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
@@ -278,6 +277,7 @@ public:
 				_write(client, "HTTP/1.0 429 ERROR\r\n", 0);
 				close(client);
 			}else{
+#if 0
 				_write(client, "HTTP/1.0 200 OK\r\n", 0);
 				_write(client,
 					"Server: Mozarella/2.2\r\n"
@@ -290,7 +290,8 @@ public:
 					"Content-Type: application/json\r\n"
 					//"Content-Type: multipart/x-mixed-replace; boundary=boundary\r\n"
 					"\r\n", 0);
-				_write(client, "[\n", 0);   // open JSON array
+#endif
+				//_write(client, "[\n", 0);   // open JSON array
 				_write(client, outputbuf, outlen);
 				cerr << "JSON_sender: new client " << client << endl;
 			}
@@ -313,7 +314,6 @@ public:
 			printf("rbytes=%d, 5555555\n",rbytes);
 			if (rbytes>=4){
 				if (memcmp(head,"jpeg",4)==0){
-					send_jpeg_json=1;
 					std::vector<unsigned char> outbuf;
 					std::vector<int> params;
 					params.push_back(cv::IMWRITE_JPEG_QUALITY);
@@ -324,11 +324,11 @@ public:
 					if (!close_all_sockets){
 						_write(s, ", \n {\"jpeg\":\"", 0);
 						_write(s, s64.c_str(), s64.length());
-						_write(s, "\"}", 0);
+						_write(s, "\"}\n", 0);
 					}
 				}
 			}
-			if (!close_all_sockets) _write(s, ", \n", 0);
+			//if (!close_all_sockets) _write(s, ", \n", 0);
 			int n = _write(s, outputbuf, outlen);
 			if (n < (int)outlen)
 			{
