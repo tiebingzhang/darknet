@@ -43,6 +43,7 @@ static int avg_frames;
 static int demo_index = 0;
 static mat_cv** cv_images;
 
+int send_jpeg_json=0;
 mat_cv* in_img;
 mat_cv* det_img;
 mat_cv* show_img;
@@ -289,6 +290,9 @@ void demo(char *cfgfile, char *weightfile, float thresh, float hier_thresh, int 
             if (demo_json_port > 0) {
                 int timeout = 400000;
                 send_json(local_dets, local_nboxes, l.classes, demo_names, frame_id, demo_json_port, timeout);
+				if (send_jpeg_json){
+					send_jpeg_json=0;
+				}
             }
 
             //char *http_post_server = "webhook.site/898bbd9b-0ddd-49cf-b81d-1f56be98d870";

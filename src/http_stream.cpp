@@ -76,6 +76,18 @@ static int close_socket(SOCKET s) {
 #ifndef SOCKET_ERROR
 #define SOCKET_ERROR   -1
 #endif
+
+#ifdef OPENCV
+
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/highgui/highgui_c.h>
+#include <opencv2/imgproc/imgproc_c.h>
+#ifndef CV_VERSION_EPOCH
+#include <opencv2/videoio/videoio.hpp>
+#endif
+#endif
+
 struct _IGNORE_PIPE_SIGNAL
 {
     struct sigaction new_actn, old_actn;
@@ -100,6 +112,39 @@ static int close_socket(SOCKET s) {
 }
 #endif // _WIN32
 
+
+extern mat_cv* in_img;
+extern int send_jpeg_json;
+
+// NOTE: This code came up with the following stackoverflow post:
+// https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
+std::string base64_encode(const std::string &in) {
+  static const auto lookup =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  std::string out;
+  out.reserve(in.size());
+
+  int val = 0;
+  int valb = -6;
+
+  for (uint8_t c : in) {
+    val = (val << 8) + c;
+    valb += 8;
+    while (valb >= 0) {
+      out.push_back(lookup[(val >> valb) & 0x3F]);
+      valb -= 6;
+    }
+  }
+
+  if (valb > -6) { out.push_back(lookup[((val << 8) >> (valb + 8)) & 0x3F]); }
+
+  while (out.size() % 4) {
+    out.push_back('=');
+  }
+
+  return out;
+}
 
 class JSON_sender
 {
@@ -203,7 +248,8 @@ public:
         fd_set rread = master;
         struct timeval select_timeout = { 0, 0 };
         struct timeval socket_timeout = { 0, timeout };
-        if (::select(maxfd + 1, &rread, NULL, NULL, &select_timeout) <= 0)
+		printf("11111111\n");
+        if (::select(maxfd + 1, &rread,NULL, NULL, &select_timeout) <= 0)
             return true; // nothing broken, there's just noone listening
 
         int outlen = static_cast<int>(strlen(outputbuf));
@@ -217,11 +263,13 @@ public:
         for (int s = 0; s <= maxfd; s++)
         {
             socklen_t addrlen = sizeof(SOCKADDR);
+			printf("s=%d, 222222\n",s);
             if (!FD_ISSET(s, &rread))      // ... on linux it's a bitmask ;)
                 continue;
 #endif
             if (s == sock) // request on master socket, accept and send main header.
             {
+				printf("s=%d, 33333333\n",s);
                 SOCKADDR_IN address = { 0 };
                 SOCKET      client = ::accept(sock, (SOCKADDR*)&address, &addrlen);
                 if (client == SOCKET_ERROR)
@@ -250,18 +298,41 @@ public:
                     //"Content-Type: multipart/x-mixed-replace; boundary=boundary\r\n"
                     "\r\n", 0);
                 _write(client, "[\n", 0);   // open JSON array
-                int n = _write(client, outputbuf, outlen);
+                _write(client, outputbuf, outlen);
                 cerr << "JSON_sender: new client " << client << endl;
             }
             else // existing client, just stream pix
             {
-                //char head[400];
+				printf("s=%d, 44444444\n",s);
+                char head[400];
                 // application/x-resource+json or application/x-collection+json -  when you are representing REST resources and collections
                 // application/json or text/json or text/javascript or text/plain.
                 // https://stackoverflow.com/questions/477816/what-is-the-correct-json-content-type
                 //sprintf(head, "\r\nContent-Length: %zu\r\n\r\n", outlen);
                 //sprintf(head, "--boundary\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n", outlen);
                 //_write(s, head, 0);
+
+				int flags = fcntl(sock, F_GETFL, 0);
+				fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+				int rbytes=read(s,head,sizeof(head));
+				printf("rbytes=%d, 5555555\n",rbytes);
+				if (rbytes>=4){
+					if (memcmp(head,"jpeg",4)==0){
+						send_jpeg_json=1;
+						std::vector<unsigned char> outbuf;
+						std::vector<int> params;
+						params.push_back(cv::IMWRITE_JPEG_QUALITY);
+						params.push_back(40);
+						cv::imencode(".jpg", *(cv::Mat*)in_img, outbuf, params);  
+						std::string const s1(outbuf.begin(), outbuf.end());
+						std::string s64=base64_encode(s1);
+                		if (!close_all_sockets){
+							_write(s, ", \n {\"jpeg\":\"", 0);
+							_write(s, s64.c_str(), s64.length());
+							_write(s, "\"}", 0);
+						}
+					}
+				}
                 if (!close_all_sockets) _write(s, ", \n", 0);
                 int n = _write(s, outputbuf, outlen);
                 if (n < (int)outlen)
@@ -328,14 +399,6 @@ void send_json(detection *dets, int nboxes, int classes, char **names, long long
 
 
 #ifdef OPENCV
-
-#include <opencv2/opencv.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/highgui/highgui_c.h>
-#include <opencv2/imgproc/imgproc_c.h>
-#ifndef CV_VERSION_EPOCH
-#include <opencv2/videoio/videoio.hpp>
-#endif
 using namespace cv;
 
 
