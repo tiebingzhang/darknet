@@ -149,8 +149,8 @@ std::string base64_encode(const std::string &in) {
 class JSON_sender
 {
     SOCKET sock;
-    SOCKET maxfd;
-    fd_set master;
+#define MAX_CLIENTS 16
+	int client_fd[MAX_CLIENTS];
     int timeout; // master sock timeout, shutdown after timeout usec.
     int close_all_sockets;
 
@@ -167,7 +167,9 @@ public:
         , timeout(_timeout)
     {
         close_all_sockets = 0;
-        FD_ZERO(&master);
+		for (int i=0;i<MAX_CLIENTS;i++){
+			client_fd[i]=-1;
+		}
         if (port)
             open(port);
     }
@@ -177,6 +179,27 @@ public:
         close_all();
         release();
     }
+
+	bool add_client(SOCKET s){
+		for (int i=0;i<MAX_CLIENTS;i++){
+			if (client_fd[i]==-1){
+				client_fd[i]=s;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool delete_client(int index){
+		if (index<0 || index>=MAX_CLIENTS){
+			return false;
+		}
+		if (client_fd[index]<0){
+			return false;
+		}
+		client_fd[index]=-1;
+		return true;
+	}
 
     bool release()
     {
@@ -205,18 +228,8 @@ public:
             cerr << "setsockopt(SO_REUSEADDR) failed" << endl;
 
         // Non-blocking sockets
-        // Windows: ioctlsocket() and FIONBIO
-        // Linux: fcntl() and O_NONBLOCK
-#ifdef WIN32
-        unsigned long i_mode = 1;
-        int result = ioctlsocket(sock, FIONBIO, &i_mode);
-        if (result != NO_ERROR) {
-            std::cerr << "ioctlsocket(FIONBIO) failed with error: " << result << std::endl;
-        }
-#else // WIN32
         int flags = fcntl(sock, F_GETFL, 0);
         fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-#endif // WIN32
 
 #ifdef SO_REUSEPORT
         if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, (const char*)&reuse, sizeof(reuse)) < 0)
@@ -232,9 +245,6 @@ public:
             cerr << "error JSON_sender: couldn't listen on sock " << sock << " on port " << port << " !" << endl;
             return release();
         }
-        FD_ZERO(&master);
-        FD_SET(sock, &master);
-        maxfd = sock;
         return true;
     }
 
@@ -245,117 +255,101 @@ public:
 
     bool write(char const* outputbuf)
     {
-        fd_set rread = master;
         struct timeval select_timeout = { 0, 0 };
         struct timeval socket_timeout = { 0, timeout };
-		printf("11111111\n");
-        if (::select(maxfd + 1, &rread,NULL, NULL, &select_timeout) <= 0)
-            return true; // nothing broken, there's just noone listening
-
         int outlen = static_cast<int>(strlen(outputbuf));
 
-#ifdef _WIN32
-        for (unsigned i = 0; i<rread.fd_count; i++)
-        {
-            int addrlen = sizeof(SOCKADDR);
-            SOCKET s = rread.fd_array[i];    // fd_set on win is an array, while ...
-#else
-        for (int s = 0; s <= maxfd; s++)
-        {
-            socklen_t addrlen = sizeof(SOCKADDR);
-			printf("s=%d, 222222\n",s);
-            if (!FD_ISSET(s, &rread))      // ... on linux it's a bitmask ;)
-                continue;
-#endif
-            if (s == sock) // request on master socket, accept and send main header.
-            {
-				printf("s=%d, 33333333\n",s);
-                SOCKADDR_IN address = { 0 };
-                SOCKET      client = ::accept(sock, (SOCKADDR*)&address, &addrlen);
-                if (client == SOCKET_ERROR)
-                {
-                    cerr << "error JSON_sender: couldn't accept connection on sock " << sock << " !" << endl;
-                    return false;
-                }
-                if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&socket_timeout, sizeof(socket_timeout)) < 0) {
-                    cerr << "error JSON_sender: SO_RCVTIMEO setsockopt failed\n";
-                }
-                if (setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (char *)&socket_timeout, sizeof(socket_timeout)) < 0) {
-                    cerr << "error JSON_sender: SO_SNDTIMEO setsockopt failed\n";
-                }
-                maxfd = (maxfd>client ? maxfd : client);
-                FD_SET(client, &master);
-                _write(client, "HTTP/1.0 200 OK\r\n", 0);
-                _write(client,
-                    "Server: Mozarella/2.2\r\n"
-                    "Accept-Range: bytes\r\n"
-                    "Connection: close\r\n"
-                    "Max-Age: 0\r\n"
-                    "Expires: 0\r\n"
-                    "Cache-Control: no-cache, private\r\n"
-                    "Pragma: no-cache\r\n"
-                    "Content-Type: application/json\r\n"
-                    //"Content-Type: multipart/x-mixed-replace; boundary=boundary\r\n"
-                    "\r\n", 0);
-                _write(client, "[\n", 0);   // open JSON array
-                _write(client, outputbuf, outlen);
-                cerr << "JSON_sender: new client " << client << endl;
-            }
-            else // existing client, just stream pix
-            {
-				printf("s=%d, 44444444\n",s);
-                char head[400];
-                // application/x-resource+json or application/x-collection+json -  when you are representing REST resources and collections
-                // application/json or text/json or text/javascript or text/plain.
-                // https://stackoverflow.com/questions/477816/what-is-the-correct-json-content-type
-                //sprintf(head, "\r\nContent-Length: %zu\r\n\r\n", outlen);
-                //sprintf(head, "--boundary\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n", outlen);
-                //_write(s, head, 0);
+		/* checking listening socket */
+		socklen_t addrlen = sizeof(SOCKADDR);
+		SOCKADDR_IN address = { 0 };
+		SOCKET client = ::accept(sock, (SOCKADDR*)&address, &addrlen);
+		if (client >=0){
+			if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&socket_timeout, sizeof(socket_timeout)) < 0) {
+				cerr << "error JSON_sender: SO_RCVTIMEO setsockopt failed\n";
+			}
+			if (setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (char *)&socket_timeout, sizeof(socket_timeout)) < 0) {
+				cerr << "error JSON_sender: SO_SNDTIMEO setsockopt failed\n";
+			}
+			//make client socket non-blocking
+			int flags = fcntl(client, F_GETFL, 0);
+			fcntl(client, F_SETFL, flags | O_NONBLOCK);
 
-				int flags = fcntl(sock, F_GETFL, 0);
-				fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-				int rbytes=read(s,head,sizeof(head));
-				printf("rbytes=%d, 5555555\n",rbytes);
-				if (rbytes>=4){
-					if (memcmp(head,"jpeg",4)==0){
-						send_jpeg_json=1;
-						std::vector<unsigned char> outbuf;
-						std::vector<int> params;
-						params.push_back(cv::IMWRITE_JPEG_QUALITY);
-						params.push_back(40);
-						cv::imencode(".jpg", *(cv::Mat*)in_img, outbuf, params);  
-						std::string const s1(outbuf.begin(), outbuf.end());
-						std::string s64=base64_encode(s1);
-                		if (!close_all_sockets){
-							_write(s, ", \n {\"jpeg\":\"", 0);
-							_write(s, s64.c_str(), s64.length());
-							_write(s, "\"}", 0);
-						}
+			if (add_client(client)==false){
+				_write(client, "HTTP/1.0 429 ERROR\r\n", 0);
+				close(client);
+			}else{
+				_write(client, "HTTP/1.0 200 OK\r\n", 0);
+				_write(client,
+					"Server: Mozarella/2.2\r\n"
+					"Accept-Range: bytes\r\n"
+					"Connection: close\r\n"
+					"Max-Age: 0\r\n"
+					"Expires: 0\r\n"
+					"Cache-Control: no-cache, private\r\n"
+					"Pragma: no-cache\r\n"
+					"Content-Type: application/json\r\n"
+					//"Content-Type: multipart/x-mixed-replace; boundary=boundary\r\n"
+					"\r\n", 0);
+				_write(client, "[\n", 0);   // open JSON array
+				_write(client, outputbuf, outlen);
+				cerr << "JSON_sender: new client " << client << endl;
+			}
+		}
+
+		for (int i=0;i<MAX_CLIENTS;i++) // existing client, just stream pix
+		{
+			SOCKET s=client_fd[i];
+			if ((int)s<0) continue;
+
+			char head[400];
+			// application/x-resource+json or application/x-collection+json -  when you are representing REST resources and collections
+			// application/json or text/json or text/javascript or text/plain.
+			// https://stackoverflow.com/questions/477816/what-is-the-correct-json-content-type
+			//sprintf(head, "\r\nContent-Length: %zu\r\n\r\n", outlen);
+			//sprintf(head, "--boundary\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n", outlen);
+			//_write(s, head, 0);
+
+			int rbytes=read(s,head,sizeof(head));
+			printf("rbytes=%d, 5555555\n",rbytes);
+			if (rbytes>=4){
+				if (memcmp(head,"jpeg",4)==0){
+					send_jpeg_json=1;
+					std::vector<unsigned char> outbuf;
+					std::vector<int> params;
+					params.push_back(cv::IMWRITE_JPEG_QUALITY);
+					params.push_back(40);
+					cv::imencode(".jpg", *(cv::Mat*)in_img, outbuf, params);  
+					std::string const s1(outbuf.begin(), outbuf.end());
+					std::string s64=base64_encode(s1);
+					if (!close_all_sockets){
+						_write(s, ", \n {\"jpeg\":\"", 0);
+						_write(s, s64.c_str(), s64.length());
+						_write(s, "\"}", 0);
 					}
 				}
-                if (!close_all_sockets) _write(s, ", \n", 0);
-                int n = _write(s, outputbuf, outlen);
-                if (n < (int)outlen)
-                {
-                    cerr << "JSON_sender: kill client " << s << endl;
-                    close_socket(s);
-                    //::shutdown(s, 2);
-                    FD_CLR(s, &master);
-                }
+			}
+			if (!close_all_sockets) _write(s, ", \n", 0);
+			int n = _write(s, outputbuf, outlen);
+			if (n < (int)outlen)
+			{
+				cerr << "JSON_sender: kill client " << s << endl;
+				close_socket(s);
+				delete_client(i);
+			}
 
-                if (close_all_sockets) {
-                    int result = close_socket(s);
-                    cerr << "JSON_sender: close clinet: " << result << " \n";
-                    continue;
-                }
-            }
-        }
+			if (close_all_sockets) {
+				int result = close_socket(s);
+				delete_client(i);
+				cerr << "JSON_sender: close clinet: " << result << " \n";
+				continue;
+			}
+		}
         if (close_all_sockets) {
             int result = close_socket(sock);
             cerr << "JSON_sender: close acceptor: " << result << " \n\n";
         }
         return true;
-        }
+	}
 };
 // ----------------------------------------
 
