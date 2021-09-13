@@ -148,7 +148,6 @@ void demo(char *cfgfile, char *weightfile, float thresh, float hier_thresh, int 
     avg_frames = avgframes;
     letter_box = letter_box_in;
     in_img = det_img = show_img = NULL;
-    //skip = frame_skip;
     image **alphabet = load_alphabet();
     int delay = frame_skip;
     demo_names = names;
