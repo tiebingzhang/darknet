@@ -292,7 +292,7 @@ public:
 					"\r\n", 0);
 #endif
 				//_write(client, "[\n", 0);   // open JSON array
-				_write(client, outputbuf, outlen);
+				//_write(client, outputbuf, outlen);
 				cerr << "JSON_sender: new client " << client << endl;
 			}
 		}

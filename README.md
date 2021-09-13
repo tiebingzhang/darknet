@@ -1,3 +1,8 @@
+###  This is a fork of <https://github.com/AlexeyAB> with the following changes:
+1. Fixed the json streaming output so that it doesn't require any input from the clients for json streaming to continue
+2. Enhanced the json streaming output so that any time a client sends "jpeg", a base64-encoded snapshot of the current
+   image will be sent inline in the json stream.
+
 # Yolo v4, v3 and v2 for Windows and Linux
 
 ## (neural networks for object detection)
