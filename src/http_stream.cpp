@@ -155,8 +155,20 @@ class JSON_sender
 
     int _write(int sock, char const*const s, int len)
     {
+		if (sock<0) return 0;
         if (len < 1) { len = strlen(s); }
-        return ::send(sock, s, len, 0);
+		int sent=0;
+		int ret;
+		while(sent<len){
+			ret=::send(sock, s, len, 0);
+			if (ret>0){
+				sent+=ret;
+			}else if (ret<0){
+				perror("Sent error\n");
+				break;
+			}
+		}
+		return sent;
     }
 
 public:
@@ -322,7 +334,7 @@ public:
 					std::string const s1(outbuf.begin(), outbuf.end());
 					std::string s64=base64_encode(s1);
 					if (!close_all_sockets){
-						_write(s, ", \n {\"jpeg\":\"", 0);
+						_write(s, "{\"jpeg\":\"", 0);
 						_write(s, s64.c_str(), s64.length());
 						_write(s, "\"}\n", 0);
 					}
